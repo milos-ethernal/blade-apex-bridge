@@ -47,11 +47,15 @@ on: # yamllint disable-line rule:truthy
         required: true
 
 jobs:
-  setup:
-    name: Setup Environment
+  test_fund_defund:
+    name: Test Fund_Defund
     runs-on: ubuntu-latest
+    env:
+      E2E_TESTS: true
+      E2E_LOGS: true
+      CI_VERBOSE: true
     outputs:
-      blade_binary: ${{ steps.build.outputs.blade_path }}
+      test_result: ${{ steps.test_result.outputs.result }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.1.1
@@ -95,41 +99,12 @@ jobs:
         with:
           ref: ${{ inputs.blade_apex_bridge_ref }}
           submodules: recursive
-      - name: Build blade binary
-        id: build
-        run: |
-          go build -o artifacts/blade .
-          echo "blade_path=${PWD}/artifacts/blade" >> $GITHUB_OUTPUT
       - name: Check certificate key permissions
         run: ls -l /etc/ssl/private/localhost.key
-
-  test_fund_defund:
-    name: Test Fund_Defund
-    runs-on: ubuntu-latest
-    needs: setup
-    env:
-      E2E_TESTS: true
-      E2E_LOGS: true
-      CI_VERBOSE: true
-    outputs:
-      test_result: ${{ steps.test_result.outputs.result }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4.1.1
-        with:
-          ref: ${{ inputs.blade_apex_bridge_ref || github.ref_name }}
-      - name: Install Go
-        uses: actions/setup-go@v5.0.0
-        with:
-          go-version: ${{ vars.GOLANG_VERSION }}
-          check-latest: true
-      - name: Copy blade binary from setup
-        run: |
-          mkdir -p artifacts
-          cp ${{ needs.setup.outputs.blade_binary }} artifacts/blade
       - name: Run Fund_Defund test
         id: test_result
         run: |
+          go build -o artifacts/blade .
           if EDGE_BINARY=${PWD}/artifacts/blade E2E_TESTS=true E2E_LOGS=true \
           go test -v -timeout=2h ./e2e-polybft/e2e/... -run "^TestE2E_SkylineBridge_Fund_Defund$"; then
             echo "result=success" >> $GITHUB_OUTPUT
@@ -142,7 +117,6 @@ jobs:
   test_valid_scenarios:
     name: Test ValidScenarios
     runs-on: ubuntu-latest
-    needs: setup
     env:
       E2E_TESTS: true
       E2E_LOGS: true
@@ -159,13 +133,45 @@ jobs:
         with:
           go-version: ${{ vars.GOLANG_VERSION }}
           check-latest: true
-      - name: Copy blade binary from setup
+      - name: Generate OpenSSL certificate
+        run: openssl req -x509 -out localhost.crt -keyout localhost.key -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -extensions EXT -config <(printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth")
+      - name: Copy certificate key
+        run: sudo cp localhost.key /etc/ssl/private/localhost.key
+      - name: Copy certificate itself
+        run: sudo cp localhost.crt /usr/local/share/ca-certificates/localhost.crt
+      - name: Add certificate to trusted list
+        run: sudo update-ca-certificates
+      - name: Update certificate key folder permissions
+        run: sudo chmod -R 755 /etc/ssl/private
+      - name: Update certificate key file permissions
+        run: sudo chmod 644 /etc/ssl/private/localhost.key
+      - name: Install Cardano tools
+        uses: milos-ethernal/cardano-node-action@5a3bce7266cc1500d96e8fa63b3bb97135988482
+      - name: Install ogmios
+        uses: milos-ethernal/ogmios-action@13e2be0b00da80f26bb8583fa129bd7c08856a49
+      - name: Checkout apex-bridge repo
+        uses: actions/checkout@v4.1.1
+        with:
+          repository: Ethernal-Tech/apex-bridge
+          ref: ${{ inputs.apex_bridge_ref || 'feat/skyline' }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Build apex-bridge
         run: |
-          mkdir -p artifacts
-          cp ${{ needs.setup.outputs.blade_binary }} artifacts/blade
+          go build -tags testenv
+          sudo mv apex-bridge /usr/local/bin/
+      - name: Verify apex-bridge executable
+        run: apex-bridge --help
+      - name: Checkout blade
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ inputs.blade_apex_bridge_ref }}
+          submodules: recursive
+      - name: Check certificate key permissions
+        run: ls -l /etc/ssl/private/localhost.key
       - name: Run ValidScenarios test
         id: test_result
         run: |
+          go build -o artifacts/blade .
           if EDGE_BINARY=${PWD}/artifacts/blade E2E_TESTS=true E2E_LOGS=true \
           go test -v -timeout=2h ./e2e-polybft/e2e/... -run "^TestE2E_SkylineBridge_ValidScenarios$"; then
             echo "result=success" >> $GITHUB_OUTPUT
@@ -178,7 +184,6 @@ jobs:
   test_remaining:
     name: Test Remaining SkylineBridge Tests
     runs-on: ubuntu-latest
-    needs: setup
     env:
       E2E_TESTS: true
       E2E_LOGS: true
@@ -195,13 +200,45 @@ jobs:
         with:
           go-version: ${{ vars.GOLANG_VERSION }}
           check-latest: true
-      - name: Copy blade binary from setup
+      - name: Generate OpenSSL certificate
+        run: openssl req -x509 -out localhost.crt -keyout localhost.key -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -extensions EXT -config <(printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth")
+      - name: Copy certificate key
+        run: sudo cp localhost.key /etc/ssl/private/localhost.key
+      - name: Copy certificate itself
+        run: sudo cp localhost.crt /usr/local/share/ca-certificates/localhost.crt
+      - name: Add certificate to trusted list
+        run: sudo update-ca-certificates
+      - name: Update certificate key folder permissions
+        run: sudo chmod -R 755 /etc/ssl/private
+      - name: Update certificate key file permissions
+        run: sudo chmod 644 /etc/ssl/private/localhost.key
+      - name: Install Cardano tools
+        uses: milos-ethernal/cardano-node-action@5a3bce7266cc1500d96e8fa63b3bb97135988482
+      - name: Install ogmios
+        uses: milos-ethernal/ogmios-action@13e2be0b00da80f26bb8583fa129bd7c08856a49
+      - name: Checkout apex-bridge repo
+        uses: actions/checkout@v4.1.1
+        with:
+          repository: Ethernal-Tech/apex-bridge
+          ref: ${{ inputs.apex_bridge_ref || 'feat/skyline' }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Build apex-bridge
         run: |
-          mkdir -p artifacts
-          cp ${{ needs.setup.outputs.blade_binary }} artifacts/blade
+          go build -tags testenv
+          sudo mv apex-bridge /usr/local/bin/
+      - name: Verify apex-bridge executable
+        run: apex-bridge --help
+      - name: Checkout blade
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ inputs.blade_apex_bridge_ref }}
+          submodules: recursive
+      - name: Check certificate key permissions
+        run: ls -l /etc/ssl/private/localhost.key
       - name: Run remaining tests
         id: test_result
         run: |
+          go build -o artifacts/blade .
           # Run all SkylineBridge tests except the long-running ones
           if EDGE_BINARY=${PWD}/artifacts/blade E2E_TESTS=true E2E_LOGS=true \
           go test -v -timeout=2h ./e2e-polybft/e2e/... -run "^TestE2E_SkylineBridge_" \

@@ -383,20 +383,36 @@ func (ec *TestCardanoChain) CreateAddresses(
 }
 
 func (ec *TestCardanoChain) FundWallets(ctx context.Context) error {
-	privateKey, err := ec.GetAdminPrivateKey()
-	if err != nil {
-		return err
-	}
-
 	if totalAmount := ec.config.FundFeeAmount; totalAmount != 0 {
-		for _, amount := range SplitAmountNTimes(new(big.Int).SetUint64(totalAmount), ec.config.FundFeeUTxOCount) {
-			txHash, err := ec.SendTx(ctx, privateKey, ec.multisigFeeAddr, amount, nil, nil)
+		privateKey, err := ec.GetAdminPrivateKey()
+		if err != nil {
+			return err
+		}
+
+		var (
+			firstAmount *big.Int
+			amount      = new(big.Int).SetUint64(totalAmount)
+		)
+
+		if utxoCount := ec.config.FundFeeUTxOCount; utxoCount >= 2 {
+			firstAmount, amount = SplitAmountNTimes(amount, utxoCount)
+
+			txHash, err := ec.SendTx(
+				ctx, privateKey, CreateSliceFromData(ec.multisigFeeAddr, utxoCount-1), firstAmount, nil, nil)
 			if err != nil {
 				return err
 			}
 
-			fmt.Printf("%s fee addr: %s funded with %s: %s\n", ec.ChainID(), ec.multisigFeeAddr, amount, txHash)
+			fmt.Printf("%s fee addr: %s funded with %s: %s\n", ec.ChainID(), ec.multisigFeeAddr, firstAmount, txHash)
 		}
+
+		txHash, err := ec.SendTx(
+			ctx, privateKey, CreateSliceFromData(ec.multisigFeeAddr, 1), amount, nil, nil)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%s fee addr: %s funded with %s: %s\n", ec.ChainID(), ec.multisigFeeAddr, amount, txHash)
 	}
 
 	if ec.config.FundTokenAmount != 0 || ec.config.FundAmount != 0 {
@@ -405,24 +421,43 @@ func (ec *TestCardanoChain) FundWallets(ctx context.Context) error {
 			return err
 		}
 
-		tokenAmounts := []*big.Int{
-			new(big.Int).SetUint64(max(2*MinUTxODefaultValue, ec.config.FundAmount)),
-			new(big.Int).SetUint64(ec.config.FundTokenAmount),
+		if ta := ec.config.FundTokenAmount; ta != 0 {
+			if err := MintToken(ec, minterWallet, DefaultTokenName, ta); err != nil {
+				return err
+			}
 		}
 
-		for _, amounts := range SplitAmountsNTimes(tokenAmounts, ec.config.FundUTxOCount) {
-			token, err := FundAddressWithToken(
-				ctx, ec,
-				minterWallet, ec.GetHotWalletAddresses()[0],
-				DefaultTokenName, DefaultTokenMintAmount,
-				amounts[0].Uint64(), amounts[1].Uint64())
+		var (
+			addr                          = ec.multisigAddr[0]
+			firstAmount, firstTokenAmount *big.Int
+			amount                        = new(big.Int).SetUint64(max(2*MinUTxODefaultValue, ec.config.FundAmount))
+			tokenAmount                   = new(big.Int).SetUint64(ec.config.FundTokenAmount)
+		)
+
+		if utxoCount := ec.config.FundUTxOCount; utxoCount >= 2 {
+			firstAmount, amount = SplitAmountNTimes(amount, utxoCount)
+			firstTokenAmount, tokenAmount = SplitAmountNTimes(tokenAmount, utxoCount)
+
+			token, err := FundAddressesWithToken(
+				ctx, ec, minterWallet, CreateSliceFromData(addr, utxoCount-1),
+				DefaultTokenName, firstAmount.Uint64(), firstTokenAmount.Uint64())
 			if err != nil {
 				return err
 			}
 
 			fmt.Printf("%s multisig addr funded with native currency and token `%s` amount: %s, %s\n",
-				ec.ChainID(), token.TokenName(), amounts[0], amounts[1])
+				ec.ChainID(), token.TokenName(), firstAmount, firstTokenAmount)
 		}
+
+		token, err := FundAddressesWithToken(
+			ctx, ec, minterWallet, CreateSliceFromData(addr, 1),
+			DefaultTokenName, amount.Uint64(), tokenAmount.Uint64())
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("%s multisig addr funded with native currency and token `%s` amount: %s, %s\n",
+			ec.ChainID(), token.TokenName(), amount, tokenAmount)
 	}
 
 	return nil
@@ -666,7 +701,7 @@ func (ec *TestCardanoChain) GetAddressToBridgeTo(
 func (ec *TestCardanoChain) SendTx(
 	ctx context.Context,
 	privateKey string,
-	receiverAddr string,
+	receiverAddrs []string,
 	amount *big.Int,
 	nativeTokenAmounts []infrawallet.TokenAmount,
 	metadata []byte,
@@ -677,16 +712,23 @@ func (ec *TestCardanoChain) SendTx(
 		return "", err
 	}
 
+	receiversDto := make([]sendtx.TxReceiversDto, len(receiverAddrs))
+	for i, addr := range receiverAddrs {
+		receiversDto[i] = sendtx.TxReceiversDto{
+			Addr:               addr,
+			OutputLovelace:     amount.Uint64(),
+			OutputNativeTokens: nativeTokenAmounts,
+		}
+	}
+
 	txInfo, err := ec.txSender.CreateTxGeneric(
 		ctx,
 		sendtx.GenericTxDto{
 			SrcChainID:             ec.ChainID(),
 			SenderAddr:             senderAddr,
 			SenderAddrPolicyScript: policyScript,
-			ReceiverAddr:           receiverAddr,
 			Metadata:               metadata,
-			OutputLovelace:         amount.Uint64(),
-			OutputNativeTokens:     nativeTokenAmounts,
+			Receivers:              receiversDto,
 		},
 	)
 	if err != nil {
@@ -697,9 +739,9 @@ func (ec *TestCardanoChain) SendTx(
 		ec.indexer.Add(txInfo.TxHash)
 	}
 
-	_, err = ec.submitTx(ctx, txInfo.TxRaw, txInfo.TxHash, receiverAddr, wallets)
+	_, err = ec.submitTx(ctx, txInfo.TxRaw, txInfo.TxHash, receiverAddrs[0], wallets)
 	if err != nil {
-		return "", fmt.Errorf("failed to send tx %s to receiver %s: %w", txInfo.TxHash, receiverAddr, err)
+		return "", fmt.Errorf("failed to send tx %s to receiver %s: %w", txInfo.TxHash, strings.Join(receiverAddrs, ","), err)
 	}
 
 	return txInfo.TxHash, nil

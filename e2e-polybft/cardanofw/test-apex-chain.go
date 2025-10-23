@@ -39,7 +39,7 @@ type ITestApexChain interface {
 		bridgingTypes ...sendtx.BridgingType,
 	) (string, error)
 	SendTx(
-		ctx context.Context, privateKey string, receiver string,
+		ctx context.Context, privateKey string, receiver []string,
 		amount *big.Int, nativeTokenAmounts []infrawallet.TokenAmount, data []byte,
 	) (string, error)
 	GetHotWalletAddresses() []string
@@ -160,7 +160,7 @@ func (*TestApexChainDummy) RunChain(t *testing.T) error {
 }
 
 func (td *TestApexChainDummy) SendTx(
-	ctx context.Context, privateKey string, receiver string,
+	ctx context.Context, privateKey string, receiver []string,
 	amount *big.Int, nativeTokenAmounts []infrawallet.TokenAmount, data []byte,
 ) (string, error) {
 	return "", nil

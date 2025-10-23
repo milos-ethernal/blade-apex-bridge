@@ -444,7 +444,8 @@ func (a *ApexSystem) FundChainHotWallet(ctx context.Context, chainID string, dfm
 	}
 
 	_, err = chain.SendTx(
-		ctx, pk, chain.GetHotWalletAddresses()[0], DfmToChainNativeTokenAmount(chainID, dfmAmount), nil, nil)
+		ctx, pk, []string{chain.GetHotWalletAddresses()[0]},
+		DfmToChainNativeTokenAmount(chainID, dfmAmount), nil, nil)
 
 	return err
 }
@@ -1004,7 +1005,7 @@ func (a *ApexSystem) SubmitTx(
 
 	txHash, err := infracommon.ExecuteWithRetry(ctx, func(ctx context.Context) (string, error) {
 		txHash, err := chain.SendTx(
-			ctx, privateKey, receiverAddr,
+			ctx, privateKey, []string{receiverAddr},
 			DfmToChainNativeTokenAmount(sourceChain, lovelaceDfmAmount), nativeTokenAmounts, data)
 		if err != nil {
 			if strings.Contains(err.Error(), "The transaction contains unknown UTxO references as inputs") {

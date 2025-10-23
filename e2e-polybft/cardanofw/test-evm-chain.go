@@ -429,10 +429,14 @@ func (ec *TestEVMChain) BridgingRequest(
 }
 
 func (ec *TestEVMChain) SendTx(
-	ctx context.Context, privateKey string, receiver string,
+	ctx context.Context, privateKey string, receivers []string,
 	amount *big.Int, _ []infrawallet.TokenAmount, data []byte,
 ) (string, error) {
-	rec, err := ec.sendTx(privateKey, receiver, amount, data)
+	if ln := len(receivers); ln != 1 {
+		return "", fmt.Errorf("evm SendTx currently supports only one receiver but got %d", ln)
+	}
+
+	rec, err := ec.sendTx(privateKey, receivers[0], amount, data)
 	if err != nil {
 		return "", err
 	}

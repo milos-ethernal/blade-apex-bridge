@@ -1,0 +1,162 @@
+---
+name: E2E Skyline Tests (Matrix)
+on: # yamllint disable-line rule:truthy
+  push:
+    branches:
+      - test-ci
+  workflow_call:
+    inputs:
+      e2e_apex_skip_redundant_tests:
+        description: E2E Skyline Skip Redundant Tests
+        type: string
+        required: true
+      apex_bridge_ref:
+        description: The branch/commit from the Apex Bridge
+        type: string
+        required: true
+      blade_apex_bridge_ref:
+        description: The branch/commit from the Blade Apex Bridge
+        type: string
+        required: true
+    outputs:
+      workflow_output:
+        description: E2E Skyline Tests output
+        value: ${{ jobs.test_summary.outputs.e2e_skyline_output_failure }}
+    secrets:
+      PERSONAL_ACCESS_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      e2e_apex_skip_redundant_tests:
+        description: E2E Skyline Skip Redundant Tests
+        type: string
+        required: true
+        default: "true"
+      apex_bridge_ref:
+        description: The branch/commit from the Apex Bridge
+        type: string
+        required: true
+        default: "feat/skyline"
+      blade_apex_bridge_ref:
+        description: The branch/commit from the Blade Apex Bridge
+        type: string
+        required: true
+        default: "feat/skyline"
+    secrets:
+      PERSONAL_ACCESS_TOKEN:
+        required: true
+
+jobs:
+  discover_tests:
+    name: Discover Skyline Bridge Tests
+    runs-on: ubuntu-latest
+    outputs:
+      test_list: ${{ steps.discover.outputs.test_list }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ inputs.blade_apex_bridge_ref || github.ref_name }}
+      - name: Install Go
+        uses: actions/setup-go@v5.0.0
+        with:
+          go-version: ${{ vars.GOLANG_VERSION }}
+          check-latest: true
+      - name: Discover tests
+        id: discover
+        run: |
+          tests=$(go test -list . ./e2e-polybft/e2e/ | grep ^TestE2E_SkylineBridge_ | jq -R -s -c 'split("\n")[:-1]')
+          test_count=$(go test -list . ./e2e-polybft/e2e/ | grep ^TestE2E_SkylineBridge_ | wc -l)
+          
+          echo "test_list=$tests" >> $GITHUB_OUTPUT
+          echo "Discovered $test_count tests - running all in parallel"
+          echo "Tests:"
+          echo "$tests"
+
+  e2e_skyline_bridge_matrix:
+    name: Run E2E Skyline Tests (Matrix)
+    runs-on: ubuntu-latest
+    needs: discover_tests
+    strategy:
+      fail-fast: false
+      matrix:
+        test_name: ${{ fromJson(needs.discover_tests.outputs.test_list) }}
+    env:
+      E2E_TESTS: true
+      E2E_LOGS: true
+      CI_VERBOSE: true
+    outputs:
+      test_result: ${{ steps.test_result.outputs.result }}
+      test_name: ${{ matrix.test_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ inputs.blade_apex_bridge_ref || github.ref_name }}
+      - name: Install Go
+        uses: actions/setup-go@v5.0.0
+        with:
+          go-version: ${{ vars.GOLANG_VERSION }}
+          check-latest: true
+      - name: Generate OpenSSL certificate
+        run: openssl req -x509 -out localhost.crt -keyout localhost.key -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -extensions EXT -config <(printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth")
+      - name: Copy certificate key
+        run: sudo cp localhost.key /etc/ssl/private/localhost.key
+      - name: Copy certificate itself
+        run: sudo cp localhost.crt /usr/local/share/ca-certificates/localhost.crt
+      - name: Add certificate to trusted list
+        run: sudo update-ca-certificates
+      - name: Update certificate key folder permissions
+        run: sudo chmod -R 755 /etc/ssl/private
+      - name: Update certificate key file permissions
+        run: sudo chmod 644 /etc/ssl/private/localhost.key
+      - name: Install Cardano tools
+        uses: milos-ethernal/cardano-node-action@5a3bce7266cc1500d96e8fa63b3bb97135988482
+      - name: Install ogmios
+        uses: milos-ethernal/ogmios-action@13e2be0b00da80f26bb8583fa129bd7c08856a49
+      - name: Checkout apex-bridge repo
+        uses: actions/checkout@v4.1.1
+        with:
+          repository: Ethernal-Tech/apex-bridge
+          ref: ${{ inputs.apex_bridge_ref || 'feat/skyline' }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Build apex-bridge
+        run: |
+          go build -tags testenv
+          sudo mv apex-bridge /usr/local/bin/
+      - name: Verify apex-bridge executable
+        run: apex-bridge --help
+      - name: Checkout blade
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ inputs.blade_apex_bridge_ref }}
+          submodules: recursive
+      - name: Check certificate key permissions
+        run: ls -l /etc/ssl/private/localhost.key
+      - name: Run specific test
+        id: test_result
+        run: |
+          go build -o artifacts/blade .
+          if env EDGE_BINARY=${PWD}/artifacts/blade E2E_TESTS=true E2E_LOGS=true \
+          go test -v -timeout=2h ./e2e-polybft/e2e/... -run "^${{ matrix.test_name }}$"; then
+            echo "result=success" >> $GITHUB_OUTPUT
+          else
+            echo "result=failure" >> $GITHUB_OUTPUT
+          fi
+        env: 
+          SKIP_E2E_REDUNDANT_TESTS: ${{ inputs.e2e_apex_skip_redundant_tests || 'true' }}
+      #- name: Archive test logs
+      #  if: always()
+      #  uses: actions/upload-artifact@v4.3.0
+      #  with:
+      #    name: e2e-skyline-logs-${{ matrix.test_name }}
+      #    path: e2e-logs-*/
+      #    retention-days: 30
+      #- name: Archive e2e skyline data
+      #  if: always()
+      #  uses: actions/upload-artifact@v4.3.0
+      #  with:
+      #    name: e2e-skyline-data-${{ matrix.test_name }}
+      #    path: e2e-bridge-data-tmp-*/
+      #    retention-days: 3
+

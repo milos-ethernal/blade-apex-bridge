@@ -144,7 +144,7 @@ jobs:
             echo "result=failure" >> $GITHUB_OUTPUT
           fi
         env: 
-          SKIP_E2E_REDUNDANT_TESTS: ${{ inputs.e2e_apex_skip_redundant_tests || 'true' }}
+          SKIP_E2E_REDUNDANT_TESTS: ${{ inputs.e2e_apex_skip_redundant_tests || 'false' }}
       #- name: Archive test logs
       #  if: always()
       #  uses: actions/upload-artifact@v4.3.0

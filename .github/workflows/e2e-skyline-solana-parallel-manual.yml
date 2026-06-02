@@ -9,7 +9,7 @@ on: # yamllint disable-line rule:truthy
       apex_bridge_ref:
         description: Apex Bridge branch or commit
         type: string
-        default: feat/skyline
+        default: feat/skyline-solana
       blade_apex_bridge_ref:
         description: >-
           Blade Apex Bridge branch or commit (leave empty to use the

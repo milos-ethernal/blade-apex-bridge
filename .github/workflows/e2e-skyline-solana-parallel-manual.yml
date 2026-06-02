@@ -47,7 +47,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4.1.1
         with:
-          ref: ${{ env.BLADE_REF }}
+          ref: feat/skyline-solana
           submodules: recursive
           fetch-depth: 0
       - name: Install Go
@@ -95,7 +95,7 @@ jobs:
         uses: actions/checkout@v4.1.1
         with:
           repository: Ethernal-Tech/apex-bridge
-          ref: ${{ inputs.apex_bridge_ref }}
+          ref: feat/skyline-solana
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
       - name: Build apex-bridge
         run: |
@@ -106,7 +106,7 @@ jobs:
       - name: Checkout blade
         uses: actions/checkout@v4.1.1
         with:
-          ref: ${{ env.BLADE_REF }}
+          ref: feat/skyline-solana
           submodules: recursive
       - name: Check certificate key permissions
         run: ls -l /etc/ssl/private/localhost.key

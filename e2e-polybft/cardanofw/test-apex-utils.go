@@ -56,8 +56,25 @@ var (
 	DefaultMinOperationFee               = DfmToWei(big.NewInt(1_000_001)) // 1.000001 Apex (1.000001*10^18)
 
 	// default min bridging fee
-	defaultFeeAddrBridgingAmount       = DfmToWei(big.NewInt(170_000))
-	defaultMinBridgingFeeAmountPolygon = DfmToWei(big.NewInt(340_000))
+	defaultFeeAddrBridgingAmountEvm = map[ChainID]*big.Int{
+		ChainIDPolygon:  DfmToWei(big.NewInt(170_000)),
+		ChainIDEthereum: DfmToWei(big.NewInt(620)),
+		ChainIDKatana:   DfmToWei(big.NewInt(80)),
+		ChainIDSei:      DfmToWei(big.NewInt(80_000)),
+		ChainIDArbitrum: DfmToWei(big.NewInt(30)),
+		ChainIDScroll:   DfmToWei(big.NewInt(20)),
+		ChainIDUnichain: big.NewInt(526_000_000_000),
+	}
+
+	defaultMinBridgingFeeAmountEvm = map[ChainID]*big.Int{
+		ChainIDPolygon:  DfmToWei(big.NewInt(340_000)),
+		ChainIDEthereum: DfmToWei(big.NewInt(1_240)),
+		ChainIDKatana:   DfmToWei(big.NewInt(160)),
+		ChainIDSei:      DfmToWei(big.NewInt(160_000)),
+		ChainIDArbitrum: DfmToWei(big.NewInt(60)),
+		ChainIDScroll:   DfmToWei(big.NewInt(40)),
+		ChainIDUnichain: DfmToWei(big.NewInt(1)),
+	}
 )
 
 type BatchTypes uint8
@@ -284,7 +301,10 @@ func GetAPIRequestGeneric[T any](ctx context.Context, requestURL string, apiKey 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return t, err
-	} else if resp.StatusCode != http.StatusOK {
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
 		return t, fmt.Errorf("http status for %s code is %d", requestURL, resp.StatusCode)
 	}
 
@@ -333,7 +353,10 @@ func FaucetRequest(ctx context.Context, addr string) (err error) {
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
-	} else if resp.StatusCode != http.StatusOK {
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("http status for %s code is %d", requestURL, resp.StatusCode)
 	}
 
@@ -597,6 +620,18 @@ func ChainIDToInt(chainID string) uint8 {
 		return 4
 	case ChainIDPolygon:
 		return 5
+	case ChainIDEthereum:
+		return 6
+	case ChainIDKatana:
+		return 7
+	case ChainIDSei:
+		return 8
+	case ChainIDArbitrum:
+		return 9
+	case ChainIDScroll:
+		return 10
+	case ChainIDUnichain:
+		return 11
 	default:
 		return 0
 	}
@@ -691,7 +726,7 @@ func GetUsersBalances(
 				)
 
 				var tokenErrs []error
-				if err == nil && (chain == ChainIDNexus || chain == ChainIDPolygon || chain == ChainIDSolana) {
+				if err == nil && (IsEVMChain(chain) || chain == ChainIDSolana) {
 					balance, tokenErrs = populateEvmAndSolTokenBalances(ctx, apex, user, chain, addr, balance)
 				}
 
@@ -862,6 +897,16 @@ func FundAddressesWithToken(
 		addrs, fundAmount, tokenAmount, txHash)
 
 	return &tokenAmount, nil
+}
+
+func IsEVMChain(chain ChainID) bool {
+	return chain == ChainIDNexus || chain == ChainIDPolygon || chain == ChainIDEthereum ||
+		chain == ChainIDKatana || chain == ChainIDSei || chain == ChainIDArbitrum ||
+		chain == ChainIDScroll || chain == ChainIDUnichain
+}
+
+func IsCardanoChain(chain ChainID) bool {
+	return chain == ChainIDPrime || chain == ChainIDVector || chain == ChainIDCardano
 }
 
 func isExitCode(err error, code int) bool {

@@ -129,12 +129,18 @@ type ApexSystem struct {
 
 	chains []ITestApexChain
 
-	PrimeInfo   CardanoChainInfo
-	VectorInfo  CardanoChainInfo
-	CardanoInfo CardanoChainInfo
-	NexusInfo   EVMChainInfo
-	PolygonInfo EVMChainInfo
-	SolanaInfo  SolanaChainInfo
+	PrimeInfo    CardanoChainInfo
+	VectorInfo   CardanoChainInfo
+	CardanoInfo  CardanoChainInfo
+	NexusInfo    EVMChainInfo
+	PolygonInfo  EVMChainInfo
+	EthereumInfo EVMChainInfo
+	KatanaInfo   EVMChainInfo
+	SeiInfo      EVMChainInfo
+	ArbitrumInfo EVMChainInfo
+	ScrollInfo   EVMChainInfo
+	UnichainInfo EVMChainInfo
+	SolanaInfo   SolanaChainInfo
 
 	EcosystemTokens map[uint16]string
 
@@ -192,7 +198,9 @@ func NewApexSystem(
 		users[i], err = NewTestApexUser(
 			NewApexNetworkTypes(ApexNetworkTypesParams{
 				PrimeConfig: config.PrimeConfig, VectorConfig: config.VectorConfig, CardanoConfig: config.CardanoConfig,
-				NexusConfig: config.NexusConfig, PolygonConfig: config.PolygonConfig,
+				NexusConfig: config.NexusConfig, PolygonConfig: config.PolygonConfig, EthereumConfig: config.EthereumConfig,
+				KatanaConfig: config.KatanaConfig, SeiConfig: config.SeiConfig, ArbitrumConfig: config.ArbitrumConfig,
+				ScrollConfig: config.ScrollConfig, UnichainConfig: config.UnichainConfig,
 			}),
 		)
 		if err != nil {
@@ -226,6 +234,13 @@ func NewSkylineSystem(
 		opt(config)
 	}
 
+	config.EthereumConfig.MinOperationFee = DefaultMinOperationFee
+	config.KatanaConfig.MinOperationFee = DefaultMinOperationFee
+	config.SeiConfig.MinOperationFee = DefaultMinOperationFee
+	config.ArbitrumConfig.MinOperationFee = DefaultMinOperationFee
+	config.ScrollConfig.MinOperationFee = DefaultMinOperationFee
+	config.UnichainConfig.MinOperationFee = DefaultMinOperationFee
+
 	users := make([]*TestApexUser, config.UserCnt)
 
 	var err error
@@ -235,6 +250,8 @@ func NewSkylineSystem(
 			NewApexNetworkTypes(ApexNetworkTypesParams{
 				PrimeConfig: config.PrimeConfig, VectorConfig: config.VectorConfig, CardanoConfig: config.CardanoConfig,
 				NexusConfig: config.NexusConfig, PolygonConfig: config.PolygonConfig, SolanaConfig: config.SolanaConfig,
+				EthereumConfig: config.EthereumConfig, KatanaConfig: config.KatanaConfig, SeiConfig: config.SeiConfig,
+				ArbitrumConfig: config.ArbitrumConfig, ScrollConfig: config.ScrollConfig, UnichainConfig: config.UnichainConfig,
 			}),
 		)
 		if err != nil {
@@ -252,6 +269,36 @@ func NewSkylineSystem(
 		return nil, fmt.Errorf("failed to create polygon chain: %w", err)
 	}
 
+	ethereum, err := NewTestEVMChain(config.EthereumConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ethereum chain: %w", err)
+	}
+
+	katana, err := NewTestEVMChain(config.KatanaConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create katana chain: %w", err)
+	}
+
+	sei, err := NewTestEVMChain(config.SeiConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create sei chain: %w", err)
+	}
+
+	arbitrum, err := NewTestEVMChain(config.ArbitrumConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create arbitrum chain: %w", err)
+	}
+
+	scroll, err := NewTestEVMChain(config.ScrollConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create scroll chain: %w", err)
+	}
+
+	unichain, err := NewTestEVMChain(config.UnichainConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create unichain chain: %w", err)
+	}
+
 	solana, err := NewTestSolanaChain(config.SolanaConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create solana chain: %w", err)
@@ -266,7 +313,7 @@ func NewSkylineSystem(
 			NewTestCardanoChain(config.PrimeConfig),
 			NewTestCardanoChain(config.VectorConfig),
 			NewTestCardanoChain(config.CardanoConfig),
-			nexus, polygon, solana,
+			nexus, polygon, ethereum, katana, sei, arbitrum, scroll, unichain, solana,
 		},
 		IsSkyline: true,
 	}
@@ -455,9 +502,7 @@ func (a *ApexSystem) FinishConfiguring(t *testing.T) error {
 		require.NoError(t, err)
 
 		for _, chain := range a.chains {
-			if chain.ChainID() == ChainIDNexus ||
-				chain.ChainID() == ChainIDPolygon ||
-				chain.ChainID() == ChainIDSolana {
+			if !IsCardanoChain(chain.ChainID()) {
 				continue
 			}
 
@@ -590,7 +635,7 @@ func (a *ApexSystem) FinishConfiguring(t *testing.T) error {
 				XADATokenID: {
 					ChainSpecific:     "",
 					LockUnlock:        false,
-					IsWrappedCurrency: true,
+					IsWrappedCurrency: false,
 				},
 				USDTTokenID: {
 					ChainSpecific:     "",
@@ -677,7 +722,29 @@ func (a *ApexSystem) FinishConfiguring(t *testing.T) error {
 				a.NexusInfo.Tokens[XPOLTokenID] = Token{
 					ChainSpecific:     "",
 					LockUnlock:        false,
-					IsWrappedCurrency: true,
+					IsWrappedCurrency: false,
+				}
+
+				a.Config.CardanoConfig.FundRelayerAmount = WeiToDfm(defaultFundTokenAmount).Uint64()
+
+				if len(a.Config.CardanoConfig.MintableTokens) == 0 {
+					a.Config.CardanoConfig.MintableTokens = map[uint16]string{CPOLTokenID: CPOLTokenName}
+				} else {
+					a.Config.CardanoConfig.MintableTokens[CPOLTokenID] = CPOLTokenName
+				}
+
+				// - Polygon <-> Cardano = POL <-> cPOL
+				a.CardanoInfo.DestChain[ChainIDPolygon] = []Direction{
+					{
+						SourceTokenID:      CPOLTokenID,
+						DestinationTokenID: POLTokenID,
+					},
+				}
+
+				a.CardanoInfo.Tokens[CPOLTokenID] = Token{
+					ChainSpecific:     "",
+					LockUnlock:        false,
+					IsWrappedCurrency: false,
 				}
 
 				a.PolygonInfo.DestChain = map[ChainID][]Direction{
@@ -693,6 +760,12 @@ func (a *ApexSystem) FinishConfiguring(t *testing.T) error {
 						{
 							SourceTokenID:      PAP3XTokenID,
 							DestinationTokenID: AP3XTokenID,
+						},
+					},
+					ChainIDCardano: {
+						{
+							SourceTokenID:      POLTokenID,
+							DestinationTokenID: CPOLTokenID,
 						},
 					},
 				}
@@ -711,13 +784,109 @@ func (a *ApexSystem) FinishConfiguring(t *testing.T) error {
 					PAP3XTokenID: {
 						ChainSpecific:     "",
 						LockUnlock:        false,
-						IsWrappedCurrency: true,
+						IsWrappedCurrency: false,
 					},
 				}
 
 				a.EcosystemTokens[POLTokenID] = POLTokenName
 				a.EcosystemTokens[XPOLTokenID] = XPOLTokenName
 				a.EcosystemTokens[PAP3XTokenID] = PAP3XTokenName
+				a.EcosystemTokens[CPOLTokenID] = CPOLTokenName
+			}
+
+			addEvmChainCurrencyToCardano := func(
+				chain ChainID, chainInfo *EVMChainInfo,
+				currencyTokenID uint16, currencyTokenName string,
+				wrappedCurrencyTokenID uint16, wrappedCurrencyTokenName string,
+			) {
+				a.CardanoInfo.DestChain[chain] = []Direction{
+					{
+						SourceTokenID:      wrappedCurrencyTokenID,
+						DestinationTokenID: currencyTokenID,
+					},
+				}
+
+				a.CardanoInfo.Tokens[wrappedCurrencyTokenID] = Token{
+					ChainSpecific:     "",
+					LockUnlock:        false,
+					IsWrappedCurrency: false,
+				}
+
+				a.Config.CardanoConfig.FundRelayerAmount = WeiToDfm(defaultFundTokenAmount).Uint64()
+
+				if len(a.Config.CardanoConfig.MintableTokens) == 0 {
+					a.Config.CardanoConfig.MintableTokens = map[uint16]string{wrappedCurrencyTokenID: wrappedCurrencyTokenName}
+				} else {
+					a.Config.CardanoConfig.MintableTokens[wrappedCurrencyTokenID] = wrappedCurrencyTokenName
+				}
+
+				chainInfo.DestChain = map[ChainID][]Direction{
+					ChainIDCardano: {
+						{
+							SourceTokenID:      currencyTokenID,
+							DestinationTokenID: wrappedCurrencyTokenID,
+						},
+					},
+				}
+
+				chainInfo.Tokens = map[uint16]Token{
+					currencyTokenID: {
+						ChainSpecific:     cardanowallet.AdaTokenName,
+						LockUnlock:        true,
+						IsWrappedCurrency: false,
+					},
+				}
+
+				a.EcosystemTokens[currencyTokenID] = currencyTokenName
+				a.EcosystemTokens[wrappedCurrencyTokenID] = wrappedCurrencyTokenName
+			}
+
+			if a.Config.EthereumConfig != nil && a.Config.EthereumConfig.IsEnabled {
+				// In case Ethereum is enabled, we need to add:
+				// - Ethereum <-> Cardano = ETH <-> cETH
+				addEvmChainCurrencyToCardano(
+					ChainIDEthereum, &a.EthereumInfo,
+					ETHTokenID, ETHTokenName, CETHTokenID, CETHTokenName)
+			}
+
+			if a.Config.KatanaConfig != nil && a.Config.KatanaConfig.IsEnabled {
+				// In case Katana is enabled, we need to add:
+				// - Katana <-> Cardano = ETH <-> cETH
+				addEvmChainCurrencyToCardano(
+					ChainIDKatana, &a.KatanaInfo,
+					KatanaETHTokenID, KatanaETHTokenName, CKatanaETHTokenID, CKatanaETHTokenName)
+			}
+
+			if a.Config.SeiConfig != nil && a.Config.SeiConfig.IsEnabled {
+				// In case Sei is enabled, we need to add:
+				// - Sei <-> Cardano = SEI <-> cSEI
+				addEvmChainCurrencyToCardano(
+					ChainIDSei, &a.SeiInfo,
+					SEITokenID, SEITokenName, CSEITokenID, CSEITokenName)
+			}
+
+			if a.Config.ArbitrumConfig != nil && a.Config.ArbitrumConfig.IsEnabled {
+				// In case Arbitrum is enabled, we need to add:
+				// - Arbitrum <-> Cardano = ETH <-> cETH
+				addEvmChainCurrencyToCardano(
+					ChainIDArbitrum, &a.ArbitrumInfo,
+					ArbitrumETHTokenID, ArbitrumETHTokenName, CArbitrumETHTokenID, CArbitrumETHTokenName)
+			}
+
+			if a.Config.ScrollConfig != nil && a.Config.ScrollConfig.IsEnabled {
+				// In case Scroll is enabled, we need to add:
+				// - Scroll <-> Cardano = ETH <-> cETH
+				addEvmChainCurrencyToCardano(
+					ChainIDScroll, &a.ScrollInfo,
+					ScrollETHTokenID, ScrollETHTokenName, CScrollETHTokenID, CScrollETHTokenName)
+			}
+
+			if a.Config.UnichainConfig != nil && a.Config.UnichainConfig.IsEnabled {
+				// In case Unichain is enabled, we need to add:
+				// - Unichain <-> Cardano = ETH <-> cETH
+				addEvmChainCurrencyToCardano(
+					ChainIDUnichain, &a.UnichainInfo,
+					UnichainETHTokenID, UnichainETHTokenName, CUnichainETHTokenID, CUnichainETHTokenName)
 			}
 		}
 
@@ -982,7 +1151,7 @@ func (a *ApexSystem) FinishConfiguring(t *testing.T) error {
 	a.InitTxSendChainConfiguration()
 
 	if a.Config.SolanaConfig != nil && a.Config.SolanaConfig.IsEnabled {
-		err := a.UpdateChainMaxNumberOfTransactions(ChainIDSolana, 4)
+		err := a.UpdateChainMaxNumberOfTransactions(ChainIDSolana, 3)
 		if err != nil {
 			return err
 		}
@@ -1063,17 +1232,22 @@ func (a *ApexSystem) InitTxSendChainConfiguration() {
 		}
 	}
 
-	if a.Config.NexusConfig != nil && a.Config.NexusConfig.IsEnabled {
-		txSenderChainConfigs[ChainIDNexus] = sendtx.ChainConfig{
-			DefaultMinFeeForBridging: WeiToDfm(a.Config.NexusConfig.MinBridgingFee).Uint64(),
+	setEVM := func(chain ChainID, config *TestEVMChainConfig) {
+		if config != nil && config.IsEnabled {
+			txSenderChainConfigs[chain] = sendtx.ChainConfig{
+				DefaultMinFeeForBridging: WeiToDfm(config.MinBridgingFee).Uint64(),
+			}
 		}
 	}
 
-	if a.Config.PolygonConfig != nil && a.Config.PolygonConfig.IsEnabled {
-		txSenderChainConfigs[ChainIDPolygon] = sendtx.ChainConfig{
-			DefaultMinFeeForBridging: WeiToDfm(a.Config.PolygonConfig.MinBridgingFee).Uint64(),
-		}
-	}
+	setEVM(ChainIDNexus, a.Config.NexusConfig)
+	setEVM(ChainIDPolygon, a.Config.PolygonConfig)
+	setEVM(ChainIDEthereum, a.Config.EthereumConfig)
+	setEVM(ChainIDKatana, a.Config.KatanaConfig)
+	setEVM(ChainIDSei, a.Config.SeiConfig)
+	setEVM(ChainIDArbitrum, a.Config.ArbitrumConfig)
+	setEVM(ChainIDScroll, a.Config.ScrollConfig)
+	setEVM(ChainIDUnichain, a.Config.UnichainConfig)
 
 	if a.Config.SolanaConfig != nil && a.Config.SolanaConfig.IsEnabled {
 		txSenderChainConfigs[ChainIDSolana] = sendtx.ChainConfig{
@@ -1140,8 +1314,7 @@ func (a *ApexSystem) DeployMintingContracts(ctx context.Context) error {
 			mintableTokens := chain.GetMintableTokens()
 
 			if len(mintableTokens) > 0 {
-				switch chain.ChainID() {
-				case ChainIDCardano, ChainIDPrime, ChainIDVector:
+				if IsCardanoChain(chain.ChainID()) { //nolint:gocritic
 					chainInfo := a.GetCardanoInfo(chain.ChainID())
 					for tokenID, tokenName := range mintableTokens {
 						if token, ok := chainInfo.Tokens[tokenID]; ok {
@@ -1149,7 +1322,7 @@ func (a *ApexSystem) DeployMintingContracts(ctx context.Context) error {
 							chainInfo.Tokens[tokenID] = token
 						}
 					}
-				case ChainIDNexus, ChainIDPolygon:
+				} else if IsEVMChain(chain.ChainID()) {
 					chainInfo := a.GetEvmInfo(chain.ChainID())
 					for tokenID, tokenName := range mintableTokens {
 						if token, ok := chainInfo.Tokens[tokenID]; ok {
@@ -1157,7 +1330,7 @@ func (a *ApexSystem) DeployMintingContracts(ctx context.Context) error {
 							chainInfo.Tokens[tokenID] = token
 						}
 					}
-				case ChainIDSolana:
+				} else if chain.ChainID() == ChainIDSolana {
 					chainInfo := a.SolanaInfo
 
 					for tokenID, tokenName := range mintableTokens {
@@ -1170,7 +1343,7 @@ func (a *ApexSystem) DeployMintingContracts(ctx context.Context) error {
 							chainInfo.Tokens[tokenID] = token
 						}
 					}
-				default:
+				} else {
 					return fmt.Errorf("unimplemented cardano contract setup for chain %s", chain.ChainID())
 				}
 			}
@@ -1240,10 +1413,24 @@ func (a *ApexSystem) loadChainIDsConfigFile() (*ChainIDsConfigFile, error) {
 
 	var chainConfigs = make([]ChainIDConfig, 0, len(chainIDsConfigFile.ChainIDConfig))
 
+	isCardanoEnabled := func(config *TestCardanoChainConfig) bool {
+		return config != nil && config.IsEnabled
+	}
+
+	isEvmEnabled := func(config *TestEVMChainConfig) bool {
+		return config != nil && config.IsEnabled
+	}
+
 	for _, chainIDConfig := range chainIDsConfigFile.ChainIDConfig {
-		if ((a.Config.CardanoConfig != nil && a.Config.CardanoConfig.IsEnabled) && chainIDConfig.ChainID == ChainIDCardano) ||
-			((a.Config.NexusConfig != nil && a.Config.NexusConfig.IsEnabled) && chainIDConfig.ChainID == ChainIDNexus) ||
-			((a.Config.PolygonConfig != nil && a.Config.PolygonConfig.IsEnabled) && chainIDConfig.ChainID == ChainIDPolygon) ||
+		if (isCardanoEnabled(a.Config.CardanoConfig) && chainIDConfig.ChainID == ChainIDCardano) ||
+			(isEvmEnabled(a.Config.NexusConfig) && chainIDConfig.ChainID == ChainIDNexus) ||
+			(isEvmEnabled(a.Config.PolygonConfig) && chainIDConfig.ChainID == ChainIDPolygon) ||
+			(isEvmEnabled(a.Config.EthereumConfig) && chainIDConfig.ChainID == ChainIDEthereum) ||
+			(isEvmEnabled(a.Config.KatanaConfig) && chainIDConfig.ChainID == ChainIDKatana) ||
+			(isEvmEnabled(a.Config.SeiConfig) && chainIDConfig.ChainID == ChainIDSei) ||
+			(isEvmEnabled(a.Config.ArbitrumConfig) && chainIDConfig.ChainID == ChainIDArbitrum) ||
+			(isEvmEnabled(a.Config.ScrollConfig) && chainIDConfig.ChainID == ChainIDScroll) ||
+			(isEvmEnabled(a.Config.UnichainConfig) && chainIDConfig.ChainID == ChainIDUnichain) ||
 			((a.Config.SolanaConfig != nil && a.Config.SolanaConfig.IsEnabled) && chainIDConfig.ChainID == ChainIDSolana) ||
 			(chainIDConfig.ChainID == ChainIDPrime) || (chainIDConfig.ChainID == ChainIDVector) {
 			chainConfigs = append(chainConfigs, chainIDConfig)
@@ -1285,21 +1472,24 @@ func (a *ApexSystem) generateDirectionsConfigFile() *DirectionConfigFile {
 		}
 	}
 
-	if a.Config.NexusConfig != nil && a.Config.NexusConfig.IsEnabled {
-		directionConfigFile.Directions[ChainIDNexus] = DirectionConfig{
-			DestinationChain:                      a.NexusInfo.DestChain,
-			Tokens:                                a.NexusInfo.Tokens,
-			AlwaysTrackCurrencyAndWrappedCurrency: false,
+	setEVM := func(chain ChainID, config *TestEVMChainConfig, info EVMChainInfo) {
+		if config != nil && config.IsEnabled {
+			directionConfigFile.Directions[chain] = DirectionConfig{
+				DestinationChain:                      info.DestChain,
+				Tokens:                                info.Tokens,
+				AlwaysTrackCurrencyAndWrappedCurrency: false,
+			}
 		}
 	}
 
-	if a.Config.PolygonConfig != nil && a.Config.PolygonConfig.IsEnabled {
-		directionConfigFile.Directions[ChainIDPolygon] = DirectionConfig{
-			DestinationChain:                      a.PolygonInfo.DestChain,
-			Tokens:                                a.PolygonInfo.Tokens,
-			AlwaysTrackCurrencyAndWrappedCurrency: false,
-		}
-	}
+	setEVM(ChainIDNexus, a.Config.NexusConfig, a.NexusInfo)
+	setEVM(ChainIDPolygon, a.Config.PolygonConfig, a.PolygonInfo)
+	setEVM(ChainIDEthereum, a.Config.EthereumConfig, a.EthereumInfo)
+	setEVM(ChainIDKatana, a.Config.KatanaConfig, a.KatanaInfo)
+	setEVM(ChainIDSei, a.Config.SeiConfig, a.SeiInfo)
+	setEVM(ChainIDArbitrum, a.Config.ArbitrumConfig, a.ArbitrumInfo)
+	setEVM(ChainIDScroll, a.Config.ScrollConfig, a.ScrollInfo)
+	setEVM(ChainIDUnichain, a.Config.UnichainConfig, a.UnichainInfo)
 
 	if a.Config.SolanaConfig != nil && a.Config.SolanaConfig.IsEnabled {
 		directionConfigFile.Directions[ChainIDSolana] = DirectionConfig{
@@ -2042,64 +2232,83 @@ func (a *ApexSystem) SubmitBridgingRequest(
 		return "", fmt.Errorf("source and destination chains are equal")
 	}
 
-	isSourceChainSupported := data.SourceChain == ChainIDPrime ||
-		data.SourceChain == ChainIDVector ||
-		data.SourceChain == ChainIDNexus ||
-		data.SourceChain == ChainIDPolygon ||
-		data.SourceChain == ChainIDCardano ||
+	isSourceChainSupported := IsEVMChain(data.SourceChain) || IsCardanoChain(data.SourceChain) ||
 		data.SourceChain == ChainIDSolana
 
 	if !isSourceChainSupported {
 		return "", fmt.Errorf("source chain is not supported")
 	}
 
-	isDestinationChainSupported := data.DestinationChain == ChainIDPrime ||
-		data.DestinationChain == ChainIDVector ||
-		data.DestinationChain == ChainIDNexus ||
-		data.DestinationChain == ChainIDPolygon ||
-		data.DestinationChain == ChainIDCardano ||
+	isDestinationChainSupported := IsEVMChain(data.DestinationChain) || IsCardanoChain(data.DestinationChain) ||
 		data.DestinationChain == ChainIDSolana
 
 	if !isDestinationChainSupported {
 		return "", fmt.Errorf("destination chain is not supported")
 	}
 
+	isCardanoChainInvalid := func(chain ChainID, config *TestCardanoChainConfig) bool {
+		return (config == nil || !config.IsEnabled) &&
+			(data.SourceChain == chain || data.DestinationChain == chain)
+	}
+
+	isEvmChainInvalid := func(chain ChainID, config *TestEVMChainConfig) bool {
+		return (config == nil || !config.IsEnabled) &&
+			(data.SourceChain == chain || data.DestinationChain == chain)
+	}
+
 	// check if chains are configured and enabled
-	if (a.Config.VectorConfig == nil || !a.Config.VectorConfig.IsEnabled) &&
-		(data.SourceChain == ChainIDVector || data.DestinationChain == ChainIDVector) {
+	if isCardanoChainInvalid(ChainIDVector, a.Config.VectorConfig) {
 		return "", fmt.Errorf("vector is not configured or enabled, but it is specified as source or destination")
 	}
 
-	if (a.Config.CardanoConfig == nil || !a.Config.CardanoConfig.IsEnabled) &&
-		(data.SourceChain == ChainIDCardano || data.DestinationChain == ChainIDCardano) {
+	if isCardanoChainInvalid(ChainIDCardano, a.Config.CardanoConfig) {
 		return "", fmt.Errorf("cardano is not configured or enabled, but it is specified as source or destination")
 	}
 
-	if (a.Config.NexusConfig == nil || !a.Config.NexusConfig.IsEnabled) &&
-		(data.SourceChain == ChainIDNexus || data.DestinationChain == ChainIDNexus) {
+	if isEvmChainInvalid(ChainIDNexus, a.Config.NexusConfig) {
 		return "", fmt.Errorf("nexus is not configured or enabled, but it is specified as source or destination")
 	}
 
-	if (a.Config.PolygonConfig == nil || !a.Config.PolygonConfig.IsEnabled) &&
-		(data.SourceChain == ChainIDPolygon || data.DestinationChain == ChainIDPolygon) {
+	if isEvmChainInvalid(ChainIDPolygon, a.Config.PolygonConfig) {
 		return "", fmt.Errorf("polygon is not configured or enabled, but it is specified as source or destination")
 	}
 
+	if isEvmChainInvalid(ChainIDEthereum, a.Config.EthereumConfig) {
+		return "", fmt.Errorf("ethereum is not configured or enabled, but it is specified as source or destination")
+	}
+
+	if isEvmChainInvalid(ChainIDKatana, a.Config.KatanaConfig) {
+		return "", fmt.Errorf("katana is not configured or enabled, but it is specified as source or destination")
+	}
+
+	if isEvmChainInvalid(ChainIDSei, a.Config.SeiConfig) {
+		return "", fmt.Errorf("sei is not configured or enabled, but it is specified as source or destination")
+	}
+
+	if isEvmChainInvalid(ChainIDArbitrum, a.Config.ArbitrumConfig) {
+		return "", fmt.Errorf("arbitrum is not configured or enabled, but it is specified as source or destination")
+	}
+
+	if isEvmChainInvalid(ChainIDScroll, a.Config.ScrollConfig) {
+		return "", fmt.Errorf("scroll is not configured or enabled, but it is specified as source or destination")
+	}
+
+	if isEvmChainInvalid(ChainIDUnichain, a.Config.UnichainConfig) {
+		return "", fmt.Errorf("unichain is not configured or enabled, but it is specified as source or destination")
+	}
+
 	// check if bridging direction is supported
-	isSourceChainCardanoType := data.SourceChain == ChainIDCardano ||
-		data.SourceChain == ChainIDPrime || data.SourceChain == ChainIDVector
-	isSourceChainEvmType := data.SourceChain == ChainIDNexus || data.SourceChain == ChainIDPolygon
 	isSourceChainSolanaType := data.SourceChain == ChainIDSolana
 
 	//nolint:gocritic
-	if isSourceChainCardanoType {
+	if IsCardanoChain(data.SourceChain) {
 		srcChainInfo := a.GetCardanoInfo(data.SourceChain)
 
 		_, ok := srcChainInfo.DestChain[data.DestinationChain]
 		if !ok {
 			return "", fmt.Errorf("invalid bridging direction")
 		}
-	} else if isSourceChainEvmType {
+	} else if IsEVMChain(data.SourceChain) {
 		srcChainInfo := a.GetEvmInfo(data.SourceChain)
 
 		_, ok := srcChainInfo.DestChain[data.DestinationChain]
@@ -2124,20 +2333,8 @@ func (a *ApexSystem) SubmitBridgingRequest(
 
 	// check if receivers are valid for the bridging - do they have necessary wallets
 	for i, receiver := range data.Receivers {
-		if data.DestinationChain == ChainIDVector && !receiver.HasVectorWallet {
-			return "", fmt.Errorf("receiver %d does not have a vector wallet for vector chain transfer", i)
-		}
-
-		if data.DestinationChain == ChainIDNexus && !receiver.HasNexusWallet {
-			return "", fmt.Errorf("receiver %d does not have a nexus wallet for nexus chain transfer", i)
-		}
-
-		if data.DestinationChain == ChainIDPolygon && !receiver.HasPolygonWallet {
-			return "", fmt.Errorf("receiver %d does not have a polygon wallet for polygon chain transfer", i)
-		}
-
-		if data.DestinationChain == ChainIDCardano && !receiver.HasCardanoWallet {
-			return "", fmt.Errorf("receiver %d does not have a cardano wallet for cardano chain transfer", i)
+		if !receiver.HasWallet(data.DestinationChain) {
+			return "", fmt.Errorf("receiver %d does not have a %s wallet chain transfer", i, data.DestinationChain)
 		}
 
 		receiversMap[receiver.GetAddress(data.DestinationChain)] = ReceiverAmount{
@@ -2147,20 +2344,8 @@ func (a *ApexSystem) SubmitBridgingRequest(
 	}
 
 	// check if users are valid for the bridging - do they have necessary wallets
-	if data.SourceChain == ChainIDVector && !data.Sender.HasVectorWallet {
-		return "", fmt.Errorf("sender does not have a vector wallet for vector chain transfer")
-	}
-
-	if data.SourceChain == ChainIDNexus && !data.Sender.HasNexusWallet {
-		return "", fmt.Errorf("sender does not have a nexus wallet for nexus chain transfer")
-	}
-
-	if data.SourceChain == ChainIDPolygon && !data.Sender.HasPolygonWallet {
-		return "", fmt.Errorf("sender does not have a polygon wallet for polygon chain transfer")
-	}
-
-	if data.SourceChain == ChainIDCardano && !data.Sender.HasCardanoWallet {
-		return "", fmt.Errorf("sender does not have a cardano wallet for cardano chain transfer")
+	if !data.Sender.HasWallet(data.SourceChain) {
+		return "", fmt.Errorf("sender does not have a %s wallet for chain transfer", data.SourceChain)
 	}
 
 	privateKey, err := data.Sender.GetPrivateKey(data.SourceChain)
@@ -2230,16 +2415,16 @@ type BridgingTokensInfo struct {
 }
 
 func (a *ApexSystem) GetChainDirectionsAndTokens(chain ChainID) (map[ChainID][]Direction, map[uint16]Token) {
-	switch chain {
-	case ChainIDNexus, ChainIDPolygon:
+	switch {
+	case IsEVMChain(chain):
 		info := a.GetEvmInfo(chain)
 
 		return info.DestChain, info.Tokens
-	case ChainIDCardano, ChainIDPrime, ChainIDVector:
+	case IsCardanoChain(chain):
 		info := a.GetCardanoInfo(chain)
 
 		return info.DestChain, info.Tokens
-	case ChainIDSolana:
+	case chain == ChainIDSolana:
 		return a.SolanaInfo.DestChain, a.SolanaInfo.Tokens
 	default:
 		return nil, nil
@@ -2438,6 +2623,18 @@ func (a *ApexSystem) GetEvmInfo(chainID string) EVMChainInfo {
 		return a.NexusInfo
 	case ChainIDPolygon:
 		return a.PolygonInfo
+	case ChainIDEthereum:
+		return a.EthereumInfo
+	case ChainIDKatana:
+		return a.KatanaInfo
+	case ChainIDSei:
+		return a.SeiInfo
+	case ChainIDArbitrum:
+		return a.ArbitrumInfo
+	case ChainIDScroll:
+		return a.ScrollInfo
+	case ChainIDUnichain:
+		return a.UnichainInfo
 	default:
 		return EVMChainInfo{}
 	}
@@ -2538,12 +2735,10 @@ func (a *ApexSystem) SetDependencies(upgradeParams *SetDependenciesSCParams) err
 }
 
 func (a *ApexSystem) GetMinBridgingFee(chainID ChainID, isNativeTokenBridging bool) *big.Int {
-	switch chainID {
-	case ChainIDNexus:
-		return a.Config.NexusConfig.MinBridgingFee
-	case ChainIDPolygon:
-		return a.Config.PolygonConfig.MinBridgingFee
-	case ChainIDSolana:
+	switch {
+	case IsEVMChain(chainID):
+		return a.getEvmConfig(chainID).MinBridgingFee
+	case chainID == ChainIDSolana:
 		return a.Config.SolanaConfig.MinBridgingFee
 	default:
 		config := a.getCardanoConfig(chainID)
@@ -2557,15 +2752,15 @@ func (a *ApexSystem) GetMinBridgingFee(chainID ChainID, isNativeTokenBridging bo
 }
 
 func (a *ApexSystem) GetMinOperationFee(chainID ChainID) *big.Int {
-	switch chainID {
-	case ChainIDNexus:
-		return a.Config.NexusConfig.MinOperationFee
-	case ChainIDPolygon:
-		return a.Config.PolygonConfig.MinOperationFee
-	case ChainIDSolana:
+	switch {
+	case IsEVMChain(chainID):
+		return a.getEvmConfig(chainID).MinOperationFee
+	case IsCardanoChain(chainID):
+		return DfmToWei(new(big.Int).SetUint64(a.getCardanoConfig(chainID).MinOperationFee))
+	case chainID == ChainIDSolana:
 		return a.Config.SolanaConfig.MinOperationFee
 	default:
-		return DfmToWei(new(big.Int).SetUint64(a.getCardanoConfig(chainID).MinOperationFee))
+		return big.NewInt(0)
 	}
 }
 
@@ -2579,6 +2774,29 @@ func (a *ApexSystem) getCardanoConfig(chainID ChainID) *TestCardanoChainConfig {
 		return a.Config.CardanoConfig
 	default:
 		return &TestCardanoChainConfig{}
+	}
+}
+
+func (a *ApexSystem) getEvmConfig(chainID ChainID) *TestEVMChainConfig {
+	switch chainID {
+	case ChainIDNexus:
+		return a.Config.NexusConfig
+	case ChainIDPolygon:
+		return a.Config.PolygonConfig
+	case ChainIDEthereum:
+		return a.Config.EthereumConfig
+	case ChainIDKatana:
+		return a.Config.KatanaConfig
+	case ChainIDSei:
+		return a.Config.SeiConfig
+	case ChainIDArbitrum:
+		return a.Config.ArbitrumConfig
+	case ChainIDScroll:
+		return a.Config.ScrollConfig
+	case ChainIDUnichain:
+		return a.Config.UnichainConfig
+	default:
+		return &TestEVMChainConfig{}
 	}
 }
 

@@ -1,0 +1,144 @@
+---
+name: E2E Skyline Solana Tests (Parallel Manual)
+on: # yamllint disable-line rule:truthy
+  workflow_dispatch:
+    inputs:
+      apex_bridge_ref:
+        description: >-
+          Apex Bridge branch or commit (Ethernal-Tech/apex-bridge)
+        type: string
+        required: true
+        default: feat/skyline
+      blade_apex_bridge_ref:
+        description: >-
+          Blade Apex Bridge branch or commit (leave empty to use the
+          branch/ref selected when starting the workflow)
+        type: string
+        default: ''
+      e2e_apex_skip_redundant_tests:
+        description: Skip redundant E2E sub-tests
+        type: boolean
+        default: false
+
+jobs:
+  e2e_skyline_solana_parallel:
+    name: ${{ matrix.test }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        test:
+          - Test_SkylineSolana_AllDirections
+          - Test_SkylineSolana_ForceFullBatch
+          - Test_SkylineSolana_OpFeeNotSet
+          - Test_SkylineSolana_UpgradeAndUpdates
+          - Test_SkylineSolana_LockUnlockTokenFlow
+          - Test_SkylineSolana_ValidScenarios
+          - Test_SkylineSolana_InvalidScenarios
+    env:
+      E2E_TESTS: true
+      E2E_LOGS: true
+      CI_VERBOSE: true
+      SKIP_E2E_REDUNDANT_TESTS: ${{ inputs.e2e_apex_skip_redundant_tests }}
+      TEST_RUN: ${{ matrix.test }}
+      BLADE_REF: ${{ inputs.blade_apex_bridge_ref != '' && inputs.blade_apex_bridge_ref || github.ref }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ env.BLADE_REF }}
+          submodules: recursive
+          fetch-depth: 0
+      - name: Install Go
+        uses: actions/setup-go@v5.0.0
+        with:
+          go-version: ${{ vars.GOLANG_VERSION }}
+          check-latest: true
+      - name: Generate OpenSSL certificate
+        run: openssl req -x509 -out localhost.crt -keyout localhost.key -newkey rsa:2048 -nodes -sha256 -subj '/CN=localhost' -extensions EXT -config <(printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth")
+      - name: Copy certificate key
+        run: sudo cp localhost.key /etc/ssl/private/localhost.key
+      - name: Copy certificate itself
+        run: sudo cp localhost.crt /usr/local/share/ca-certificates/localhost.crt
+      - name: Add certificate to trusted list
+        run: sudo update-ca-certificates
+      - name: Update certificate key folder permissions
+        run: sudo chmod -R 755 /etc/ssl/private
+      - name: Update certificate key file permissions
+        run: sudo chmod 644 /etc/ssl/private/localhost.key
+      - name: Install Cardano tools
+        uses: milos-ethernal/cardano-node-action@5a3bce7266cc1500d96e8fa63b3bb97135988482
+      - name: Install ogmios
+        uses: milos-ethernal/ogmios-action@13e2be0b00da80f26bb8583fa129bd7c08856a49
+      - name: Install Cardano tools v11
+        uses: milos-ethernal/cardano-node-action@d50edd56c4da9f10533ef99c9bfdb960c879956d
+        with:
+          tag: '11.0.1'
+          sufix: '11'
+      - name: Install ogmios for v11
+        uses: milos-ethernal/ogmios-action@53cfb88b80a9c3c7891e13ba7f29e4028aea9630
+        with:
+          tag: 'v6.14.0'
+          sufix: '11'
+      - name: Install node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/v3.0.14/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Verify Solana toolchain
+        run: solana --version
+      - name: Checkout apex-bridge repo
+        uses: actions/checkout@v4.1.1
+        with:
+          repository: Ethernal-Tech/apex-bridge
+          ref: ${{ inputs.apex_bridge_ref }}
+          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+      - name: Build apex-bridge
+        run: |
+          go build -tags testenv
+          sudo mv apex-bridge /usr/local/bin/
+      - name: Verify apex-bridge executable
+        run: apex-bridge --help
+      - name: Checkout blade
+        uses: actions/checkout@v4.1.1
+        with:
+          ref: ${{ env.BLADE_REF }}
+          submodules: recursive
+      - name: Check certificate key permissions
+        run: ls -l /etc/ssl/private/localhost.key
+      - name: Run Solana test
+        run: |
+          go build -o artifacts/blade .
+          cd cardano-smart-contracts/ && npm i && cd ..
+          env EDGE_BINARY=${PWD}/artifacts/blade E2E_TESTS=true E2E_LOGS=true \
+          go test -v -timeout=7h ./e2e-polybft/e2e/... -run "^${TEST_RUN}$"
+      - name: Archive test logs
+        if: always()
+        uses: actions/upload-artifact@v4.3.0
+        with:
+          name: e2e-skyline-solana-logs-${{ matrix.test }}
+          path: e2e-logs-*/
+          retention-days: 30
+      - name: Archive e2e skyline solana data
+        if: always()
+        uses: actions/upload-artifact@v4.3.0
+        with:
+          name: e2e-skyline-solana-data-${{ matrix.test }}
+          path: e2e-bridge-data-tmp-*/
+          retention-days: 3
+
+  e2e_skyline_solana_parallel_result:
+    name: E2E Skyline Solana Parallel Result
+    needs: e2e_skyline_solana_parallel
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check parallel test jobs
+        run: |
+          if [ "${{ needs.e2e_skyline_solana_parallel.result }}" != "success" ]; then
+            echo "One or more Skyline Solana E2E tests failed."
+            exit 1
+          fi

@@ -1,6 +1,9 @@
 ---
 name: E2E Skyline Solana Tests (Parallel Manual Skyline)
 on: # yamllint disable-line rule:truthy
+  push:
+   branches:
+     - feat/skyline
   workflow_dispatch:
     inputs:
       apex_bridge_ref:

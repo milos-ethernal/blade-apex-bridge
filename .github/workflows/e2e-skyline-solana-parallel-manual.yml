@@ -1,5 +1,5 @@
 ---
-name: E2E Skyline Solana Tests (Parallel Manual)
+name: E2E Skyline Solana Tests (Parallel Manual Skyline)
 on: # yamllint disable-line rule:truthy
   workflow_dispatch:
     inputs:
